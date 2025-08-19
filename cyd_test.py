@@ -10,7 +10,7 @@ from modules.sdcard import SDCard
 # Save this file as ili9341.py https://github.com/rdagger/micropython-ili9341/blob/master/ili9341.py
 from modules.ili9341 import Display, color565
 # Save this file as xglcd_font.py https://github.com/rdagger/micropython-ili9341/blob/master/xglcd_font.py
-from modules.xglcd_font import XglcdFont
+from modules.my_xglcd_font import XglcdFont
 from modules.xpt2046 import Touch
 
 
@@ -154,29 +154,45 @@ def initialize_touchscreen () :
     return ts
 
 def draw_text():
-    # Set colors
-    white_color = color565(255, 255, 255)  # white color
-    black_color = color565(0, 0, 0)        # black color
-
-    # Turn on display backlight
-    #backlight = Pin(21, Pin.OUT)
-    #backlight.on()
-
     # Clear display
-    display.clear(black_color)
+    display.clear(BLACK)
 
     # Draw the text on (0, 0) coordinates (x, y, text, font color, font background color, rotation)
-    display.draw_text8x8(0, 0, 'ESP32 says hello!', white_color, black_color, 0)
+    display.draw_text8x8(0, 0, 'ESP32 says hello!', WHITE, BLACK, 0)
     
     # Draw the text on the center of the display
     font_size = 8
     text_msg = 'Centered text'
     x_center = int((display.width-len(text_msg)*font_size)/2)
     y_center = int(((display.height)/2)-(font_size/2))
-    display.draw_text8x8(x_center, y_center, text_msg, white_color, black_color, 0)
+    display.draw_text8x8(x_center, y_center, text_msg, WHITE, BLACK, 0)
     
     # Draw the text on the right with rotation
-    display.draw_text8x8(display.width-font_size, 0, 'Text with rotation', white_color, black_color, 90)
+    display.draw_text8x8(display.width-font_size, 0, 'Text with rotation', WHITE, BLACK, 90)
+
+def draw_font () :
+    # Clear display
+    display.clear(WHITE)
+
+    # Loading Unispace font
+    print('Loading Unispace font...')
+    unispace_font = XglcdFont('modules/Unispace12x24.c', 12, 24)
+    
+    # Draw the text on (0, 0) coordinates (x, y, text, font,  font color, font background color,
+    #                                      landscape=False, rotate_180=False, spacing=1)
+    display.draw_text(0, 0, 'ESP32 says hello!', unispace_font, BLACK, WHITE)
+
+    # Draw the text on the center of the display
+    font_size_w = unispace_font.width
+    font_size_h = unispace_font.height
+    text_msg = 'Centered text'
+    x_center = int((display.width-len(text_msg)*font_size_w)/2)
+    y_center = int(((display.height)/2)-(font_size_h/2))
+    display.draw_text(x_center, y_center, text_msg, unispace_font, BLACK, WHITE)
+    
+    # Draw the text with rotation
+    display.draw_text(display.width-font_size_h, display.height-font_size_w, 'Text with rotation',
+                      unispace_font, BLACK, WHITE, landscape=True)
 
 #-------------------------------------------------------------------------------
 def display_tests() :
@@ -185,7 +201,10 @@ def display_tests() :
         print ("display_tests: display not initialized")
         return
     try:
-        draw_text()
+        draw_text ()
+        sleep (5)
+        draw_font ()
+        sleep (5)
     except Exception as e:
         print('Error occured: ', e)
     except KeyboardInterrupt:
