@@ -3,7 +3,7 @@
  
 from machine import Pin, SPI, SoftSPI, ADC, idle
 import os, sys
-from time import sleep
+from time import sleep_ms
 
 from modules.sdcard import SDCard
 from modules.sys_font import SysFont
@@ -41,14 +41,11 @@ RGB_GREEN_PIN = 16
 RGB_BLUE_PIN = 17
 
 ## SD card
+SD_SPI_ID = 1
 SD_MISO_PIN = 19
 SD_MOSI_PIN = 23
 SD_SCK_PIN = 18
 SD_CS_PIN = 5
-#SD_DIR = None
-
-
-#sys.exit()
 
 ## LDR
 LDR_PIN = 34
@@ -99,10 +96,15 @@ def initialize_sdcard (mount_dir = "/sd") :
     global log_file_path
     global log_file_id
     try :
-        spi = SoftSPI (1,sck=Pin(SD_SCK_PIN),mosi=Pin(SD_MOSI_PIN),miso=Pin(SD_MISO_PIN))
-        sd = SDCard (spi,cs=Pin(SD_CS_PIN))
+        spi = SoftSPI (SD_SPI_ID ,
+                        sck = Pin (SD_SCK_PIN) ,
+                        mosi = Pin (SD_MOSI_PIN) ,
+                        miso = Pin (SD_MISO_PIN))
+        sd = SDCard (spi ,
+                    cs = Pin (SD_CS_PIN))
         # Mount the SD card
         os.mount(sd, mount_dir)
+        # Printing the SD direcory may cause a memory fault
         #print ("list sd directory")
         #print(os.listdir('/sd'))
     except Exception as e :
@@ -170,14 +172,14 @@ def initialize_touchscreen () :
     ts = None
     try :
         touchscreen_spi = SPI(TS_SPI_ID,
-                                baudrate=TS_BAUDRATE,
-                                sck=Pin(TS_SCK_PIN),
-                                mosi=Pin(TS_MOSI_PIN),
-                                miso=Pin(TS_MISO_PIN))
+                                baudrate = TS_BAUDRATE ,
+                                sck = Pin (TS_SCK_PIN) ,
+                                mosi = Pin (TS_MOSI_PIN) ,
+                                miso = Pin (TS_MISO_PIN))
         ts = Touch (touchscreen_spi,
-                    cs=Pin(TS_CS_PIN),
-                    int_pin=Pin(TS_INT_PIN),
-                    int_handler=touchscreen_press)
+                    cs = Pin (TS_CS_PIN),
+                    int_pin = None , #Pin (TS_INT_PIN),
+                    int_handler = None) #touchscreen_press)
     except Exception as e :
         print ("init touch:", e)
         pass
@@ -236,9 +238,9 @@ def display_tests() :
         return
     try:
         draw_text ()
-        sleep (5)
+        sleep_ms (5000)
         draw_font ()
-        sleep (5)
+        sleep_ms (5000)
     except Exception as e:
         print('Error occured: ', e)
     except KeyboardInterrupt:
@@ -255,6 +257,25 @@ def touchscreen_tests() :
     if touchscreen is None :
         write_log ("touchscreen_tests: touch screen not initialized")
         return
+    quit = False
+    display.clear(WHITE)
+    sys_font.text_sysfont (5, 5, "Touch Screen", scale=3, text_color=BLACK)
+    sys_font.text_sysfont (5, 210, "   Quit   ", scale=3, text_color=BLACK)
+    while not quit :
+        touch = touchscreen.get_touch()
+        if touch is not None :
+            x_pos = DISPLAY_WIDTH - touch [1]
+            y_pos = DISPLAY_HEIGHT - touch [0]
+            touch_text = f"Touch: x = {x_pos}, y = {y_pos}    "
+            write_log (touch_text)
+            display.fill_rectangle (5, 50, 310, 20, WHITE)
+            sys_font.text_sysfont (5, 50, touch_text, scale=2, text_color=BLACK)
+            if y_pos >= 210 :
+                write_log ("Touch Screen: Quit")
+                break
+            sleep_ms (500)
+        sleep_ms (10)
+        #if touch is None :
 
 def sdcard_tests() :
     write_log ("sdcard_tests")
