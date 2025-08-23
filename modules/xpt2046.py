@@ -1,6 +1,6 @@
 """XPT2046 Touch module."""
 from time import sleep
-
+import time
 
 class Touch(object):
     """Serial interface for XPT2046 Touch Screen Controller."""
@@ -59,28 +59,39 @@ class Touch(object):
 
     def get_touch(self):
         """Take multiple samples to get accurate touch reading."""
+        first_time = True
         timeout = 2  # set timeout to 2 seconds
+        timeout_ms = time.ticks_add (time.ticks_ms (), 2000)
         confidence = 5
         buff = [[0, 0] for x in range(confidence)]
         buf_length = confidence  # Require a confidence of 5 good samples
         buffptr = 0  # Track current buffer position
         nsamples = 0  # Count samples
-        while timeout > 0:
-            if nsamples == buf_length:
+        #while timeout > 0:
+        while time.ticks_diff(timeout_ms, time.ticks_ms ()) > 0 :
+            if nsamples >= buf_length:
+                #print ("Sample buff:", buff)
                 meanx = sum([c[0] for c in buff]) // buf_length
                 meany = sum([c[1] for c in buff]) // buf_length
                 dev = sum([(c[0] - meanx)**2 +
                           (c[1] - meany)**2 for c in buff]) / buf_length
                 if dev <= 50:  # Deviation should be under margin of 50
                     return self.normalize(meanx, meany)
+                nsamples = 0
             # get a new value
             sample = self.raw_touch()  # get a touch
             if sample is None:
+                if first_time :
+                    first_time = False
+                    return None
+                #print ("sample reset")
                 nsamples = 0    # Invalidate buff
             else:
+                #print ("sample:", sample)
                 buff[buffptr] = sample  # put in buff
                 buffptr = (buffptr + 1) % buf_length  # Incr, until rollover
-                nsamples = min(nsamples + 1, buf_length)  # Incr. until max
+                nsamples += 1 #min(nsamples + 1, buf_length)  # Incr. until max
+                #print ("nsamples:", nsamples)
 
             sleep(.05)
             timeout -= .05

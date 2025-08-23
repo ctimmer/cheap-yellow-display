@@ -61,6 +61,7 @@ RGB_GREEN_PIN = 16
 RGB_BLUE_PIN = 17
 
 ## SD card
+SD_SPI_ID = 1
 SD_MISO_PIN = 19
 SD_MOSI_PIN = 23
 SD_SCK_PIN = 18
@@ -113,8 +114,12 @@ sddir = None
 
 def initialize_sdcard (mount_dir = "/sd") :
     try :
-        spi = SoftSPI (1,sck=Pin(SD_SCK_PIN),mosi=Pin(SD_MOSI_PIN),miso=Pin(SD_MISO_PIN))
-        sd = SDCard (spi,cs=Pin(SD_CS_PIN))
+        spi = SoftSPI (SD_SPI_ID ,
+                        sck = Pin (SD_SCK_PIN) ,
+                        mosi = Pin (SD_MOSI_PIN) ,
+                        miso = Pin (SD_MISO_PIN))
+        sd = SDCard (spi,
+                    cs = Pin(SD_CS_PIN))
         # Mount the SD card
         os.mount(sd, mount_dir)
         '''
@@ -130,7 +135,7 @@ def initialize_sdcard (mount_dir = "/sd") :
         '''
     except Exception as e :
         print (e)
-        return None
+        #return None
     gc.collect ()
     return mount_dir
 # end initialize_sdcard
@@ -154,16 +159,20 @@ def initialize_display () :
     return disp
 # end initialize_display #
 
+op = None
+
 def touchscreen_press(x, y) :
+    if op is not None :
+        return
     #display.clear(black_color)
-    print (x,y)
+    #print (x,y)
     ## adjust for screen rotation (?)
     x_pos = DISPLAY_WIDTH - y
     y_pos = DISPLAY_HEIGHT - x
     text_touch_coordinates = "Touch: X = " + str(x_pos) + " | Y = " + str(y_pos)
     x_center = int((display.width-len(text_touch_coordinates)*font_size)/2)
     #display.draw_text8x8(x_center, y_center, text_touch_coordinates, WHITE, BLACK, 0)
-    print("Touch: X = " + str(x_pos) + " | Y = " + str(y_pos))
+    print(text_touch_coordinates)
     set_op (x_pos, y_pos)
 
 # SPI for touchscreen
@@ -175,8 +184,8 @@ def initialize_touchscreen () :
                         miso=Pin(TS_MISO_PIN))
     ts = Touch(touchscreen_spi,
                     cs=Pin(TS_CS_PIN),
-                    int_pin=Pin(TS_INT_PIN),
-                    int_handler=touchscreen_press)
+                    int_pin=None, #Pin(TS_INT_PIN),
+                    int_handler=None) #touchscreen_press)
     gc.collect ()
     return ts
 
@@ -401,14 +410,14 @@ try :
 except :
     pass
 
-sd_dir = initialize_sdcard ()
+#sd_dir = initialize_sdcard ()
 display = initialize_display ()
 touchscreen = initialize_touchscreen ()
 
 sysfont = SysFont (display)
 
 print ("CPU freq:", freq())
-print ("SD card mount:", sd_dir)
+#print ("SD card mount:", sd_dir)
 
 odom_images = SpriteHandler ()
 odom_images.load_raw_file (OD_DIGIT_FILE ,
@@ -439,33 +448,51 @@ sysfont.text_sysfont (10 ,
 
 font_size = 8
 y_center = int(((display.height)/2)-(font_size/2))
-op = None
+
 
 TOUCH_BUTTONS = [
     {
     "op" : "u1" ,
     "x" : 10 ,
-    "y" : 200 ,
-    "w" : 20 ,
-    "h" : 20 ,
+    "y" : 170 ,
+    "w" : 50 ,
+    "h" : 50 ,
+    "color" : WHITE ,
+    "bg" : GREEN
+    } ,
+    {
+    "op" : "u5" ,
+    "x" : 62 ,
+    "y" : 170 ,
+    "w" : 50 ,
+    "h" : 50 ,
     "color" : WHITE ,
     "bg" : GREEN
     } ,
     {
     "op" : "d1" ,
-    "x" : 40 ,
-    "y" : 200 ,
-    "w" : 20 ,
-    "h" : 20 ,
+    "x" : 130 ,
+    "y" : 170 ,
+    "w" : 50 ,
+    "h" : 50 ,
+    "color" : WHITE ,
+    "bg" : RED
+    } ,
+    {
+    "op" : "d5" ,
+    "x" : 182 ,
+    "y" : 170 ,
+    "w" : 50 ,
+    "h" : 50 ,
     "color" : WHITE ,
     "bg" : RED
     } ,
     {
     "op" : "q" ,
-    "x" : 290 ,
-    "y" : 200 ,
-    "w" : 20 ,
-    "h" : 20 ,
+    "x" : 260 ,
+    "y" : 170 ,
+    "w" : 50 ,
+    "h" : 50 ,
     "color" : WHITE ,
     "bg" : YELLOW_ORANGE
     }
@@ -482,38 +509,60 @@ for _, button in enumerate (TOUCH_BUTTONS) :
     #print (button)
 
 def set_op (x, y) :
+    #print ("set_op:", x, y)
     global op
+    #if op is not None :
+    #    return
+    x_pos = DISPLAY_WIDTH - y
+    y_pos = DISPLAY_HEIGHT - x
+    #print ("set_op:", x_pos, y_pos)
     for _, button in enumerate (TOUCH_BUTTONS) :
-        if x >= button["x"] and x <= button["x_max"] \
-        and y >= button["y"] and y <= button["y_max"] :
+        if x_pos >= button["x"] and x_pos <= button["x_max"] \
+        and y_pos >= button["y"] and y_pos <= button["y_max"] :
             op = button ["op"]
             #print (op)
-            break
+            return button ["op"]
+    return None
 
-wait_time_ms = 100
+wait_time_ms = 200
 wait_ms = time.ticks_ms()
 try:
     # Run the event loop indefinitely
     while True:
         # Loop to wait for touchscreen press
-        if time.ticks_diff (time.ticks_ms(), wait_ms) > 0 :
-            if touchscreen.raw_touch() is not None :
-                touchscreen.get_touch()
-                if op is not None :
-                    print (op)
-                    if op == "u1" :
+        ticks_ms = time.ticks_ms()
+        if time.ticks_diff (ticks_ms, wait_ms) > 0 :
+            if True : #touchscreen.raw_touch() is not None :
+                operation = None
+                touch = touchscreen.get_touch()
+                #print ("get_t:", touch)
+                if touch is None :
+                    wait_ms = time.ticks_add (ticks_ms, 10)
+                    continue
+                operation = set_op (touch[0], touch[1])
+                print ("op:", operation)
+                if operation is not None :
+                    print ("Operation:", operation)
+                    if operation == "u1" :
                         odometer_increment (1)
-                    elif op == "d1" :
+                    elif operation == "u5" :
+                        odometer_increment (5)
+                    elif operation == "d1" :
                         odometer_increment (-1)
-                    elif op == "q" :
+                    elif operation == "d5" :
+                        odometer_increment (-5)
+                    elif operation == "q" :
                         break
-                    op = None
-                wait_ms = time.ticks_ms() + wait_time_ms
+                    operation = None
+                    wait_ms = time.ticks_add (ticks_ms, wait_time_ms)
+                    continue
+                wait_ms = time.ticks_add (ticks_ms, 50)
+                
 except Exception as e:
     print('Error occured: ', e)
 except KeyboardInterrupt:
     print('Program Interrupted by the user')        
 finally:
-    sysfont.text_sysfont (10, 160, "That's All Folks", scale=3, text_color=BLACK)
+    sysfont.text_sysfont (10, 120, "That's All Folks", scale=3, text_color=BLACK)
     time.sleep (3)
-    display.cleanup()
+    #display.cleanup()

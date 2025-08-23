@@ -2,15 +2,17 @@
 # Complete project details at https://RandomNerdTutorials.com/micropython-cheap-yellow-display-board-cyd-esp32-2432s028r/
  
 from machine import Pin, SPI, SoftSPI, ADC, idle
-import os
+import os, sys
 from time import sleep
 
 from modules.sdcard import SDCard
+from modules.sys_font import SysFont
 
 # Save this file as ili9341.py https://github.com/rdagger/micropython-ili9341/blob/master/ili9341.py
 from modules.ili9341 import Display, color565
 # Save this file as xglcd_font.py https://github.com/rdagger/micropython-ili9341/blob/master/xglcd_font.py
 from modules.my_xglcd_font import XglcdFont
+# Touch screen interface
 from modules.xpt2046 import Touch
 
 
@@ -70,35 +72,57 @@ YELLOW_ORANGE = color565 (255,179,67)
 
 # SD card mount
 sd_mount = None
+log_file_name = "cyd_test_log.txt"
+log_file_path = None
+log_file_id = None
 # Set up display
 display = None
 touchscreen = None
+sys_font = None
+
+def write_log (log_text) :
+    global log_file_id
+    if log_file_id is not None :
+        print (log_text, file = log_file_id)
+    elif display is not None :
+        display.fill_rectangle (x=0, y=220, w=320, h=20, color=WHITE)
+        if sys_font is not None :
+            sys_font.text_sysfont (5, 220, log_text, scale=2, text_color=BLACK)
+        else :
+            display.draw_text8x8(0, 0, log_text, WHITE, BLACK, 0)
+        time.sleep_ms (1000)
+    else :
+        print (log_text)
 
 def initialize_sdcard (mount_dir = "/sd") :
+    global log_file_name
+    global log_file_path
+    global log_file_id
     try :
         spi = SoftSPI (1,sck=Pin(SD_SCK_PIN),mosi=Pin(SD_MOSI_PIN),miso=Pin(SD_MISO_PIN))
         sd = SDCard (spi,cs=Pin(SD_CS_PIN))
         # Mount the SD card
         os.mount(sd, mount_dir)
-        '''
-        # Debug print SD card directory and files
-        print ("list sd directory")
-        print(os.listdir('/sd'))
-        # Create / Open a file in write mode.
-        # Write mode creates a new file.
-        # If  already file exists. Then, it overwrites the file.
-        print ("open")
-        file = open("/sd/sample3.txt","w")
-        file.close ()
-        '''
+        #print ("list sd directory")
+        #print(os.listdir('/sd'))
     except Exception as e :
         print (e)
         return None
+    write_log ("SDcard mount: " + mount_dir)  
+    try :
+        log_file_path = mount_dir + "/" + log_file_name
+        print ("initialize_sdcard: Opening:" + log_file_path)
+        log_file_id = open (log_file_path, "w")
+        write_log ("Log file opened")
+    except Exception as e :
+        print (e)
     gc.collect ()
     return mount_dir
 # end initialize_sdcard
 
 def initialize_display () :
+    global sys_font
+    write_log ("initialize_display")
     disp = None
     try :
         spi = SPI(SPI_ID,
@@ -117,7 +141,13 @@ def initialize_display () :
         backlight.on()
     except Exception as e :
         print ("init display:", e)
-        pass
+        write_log ("initialize_display: Failed")
+        return None
+    try :
+        sys_font = SysFont (disp)
+    except Exception as e :
+        print ("init display SysFont:", e)
+        write_log ("initialize_display: sys_font Failed")
     gc.collect ()
     return disp
 # end initialize_display #
@@ -136,6 +166,7 @@ def touchscreen_press(x, y) :
 
 # SPI for touchscreen
 def initialize_touchscreen () :
+    write_log ("initialize_touchscreen")
     ts = None
     try :
         touchscreen_spi = SPI(TS_SPI_ID,
@@ -154,6 +185,7 @@ def initialize_touchscreen () :
     return ts
 
 def draw_text():
+    write_log ("draw_text")
     # Clear display
     display.clear(BLACK)
 
@@ -171,11 +203,12 @@ def draw_text():
     display.draw_text8x8(display.width-font_size, 0, 'Text with rotation', WHITE, BLACK, 90)
 
 def draw_font () :
+    write_log ("draw_font")
     # Clear display
     display.clear(WHITE)
 
     # Loading Unispace font
-    print('Loading Unispace font...')
+    write_log ('Loading Unispace font...')
     unispace_font = XglcdFont('modules/Unispace12x24.c', 12, 24)
     
     # Draw the text on (0, 0) coordinates (x, y, text, font,  font color, font background color,
@@ -196,9 +229,10 @@ def draw_font () :
 
 #-------------------------------------------------------------------------------
 def display_tests() :
+    write_log  ("display_tests")
     global display
     if display is None :
-        print ("display_tests: display not initialized")
+        write_log ("display not initialized")
         return
     try:
         draw_text ()
@@ -208,20 +242,22 @@ def display_tests() :
     except Exception as e:
         print('Error occured: ', e)
     except KeyboardInterrupt:
-        print('Program Interrupted by the user')        
+        print ('Program Interrupted by the user')        
         #display.cleanup()
 
 def touchscreen_tests() :
+    write_log ("touchscreen_tests")
     global display
     global touchscreen
     if display is None :
-        print ("touchscreen_tests: display not initialized")
+        write_log ("touchscreen_tests: display not initialized")
         return
     if touchscreen is None :
-        print ("touchscreen_tests: touch screen not initialized")
+        write_log ("touchscreen_tests: touch screen not initialized")
         return
 
 def sdcard_tests() :
+    write_log ("sdcard_tests")
     global sd_mount
     if sd_mount is None :
         print ("sdcard_tests: SD card not mounted")
@@ -229,8 +265,9 @@ def sdcard_tests() :
 
 ################################################################################
 
-sd_mount = initialize_sdcard ()
+sd_mount = initialize_sdcard ()     # Call first for log output
 print ("SD card mount:", sd_mount)
+#sys.exit ()
 display = initialize_display ()
 touchscreen = initialize_touchscreen ()
 
@@ -238,3 +275,15 @@ display_tests ()
 touchscreen_tests ()
 sdcard_tests ()
 
+if log_file_id is not None :
+    log_file_id.close ()
+    print ("\nDisplaying log file:")
+    with open (log_file_path, "r") as log_file :
+        log_line = log_file.readline ()
+        while log_line :
+            print (log_line, end='')    # Already has NL
+            log_line = log_file.readline ()
+
+if sd_mount is not None :
+    print ("Unmounting:", sd_mount)
+    os.umount (sd_mount)
