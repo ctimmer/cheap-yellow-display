@@ -1,19 +1,38 @@
 #
 
-btree = None
+USE_JSON = True
 
-try :
-    import json
-    import btree
-except Exception as e :
-    print (e)
+btree = None
+dumps = None
+loads = None
+
+if USE_JSON :
+    ## Use json module for row serialization
+    print ("Using json module")
+    try :
+        import json
+        import btree
+        dumps = lambda row_dict : bytes (json.dumps (row_dict).encode())
+        loads = lambda row : json.loads (row.decode())
+    except Exception as e :
+        print (e)
+else :
+    ## Use umsgpack module for row serialization
+    print ("Using umsgpack module")
+    try :
+        import umsgpack
+        import btree
+        dumps = lambda row_dict : umsgpack.dumps(row_dict)
+        loads = lambda row : umsgpack.loads(row)
+    except Exception as e :
+        print (e)
 
 simpledb_available = btree is not None
 
 class SimpleDB :
     def __init__ (self,db_file_path,key_separator = ".",auto_commit=True) :
         if btree is None :
-            print ("btree module is missing")
+            print ("support module(s) missing")
             #raise ???
             return
         db_file = None
@@ -31,13 +50,13 @@ class SimpleDB :
     ## writes/rewrites table row from row_dict
     def write_row (self,table_name,key,row_dict) :
         row_dict ["key"] = key    # include key in row
-        self.db [self.build_key(table_name, key)]=bytes (json.dumps (row_dict).encode())
+        self.db [self.build_key(table_name, key)]=dumps(row_dict)
         if self.auto_commit :
             self.commit ()
     ## read row from table/key, returns None if not found
     def read_row (self,table_name,key) :
         try :
-            return json.loads (self.db [self.build_key (table_name, key)])
+            return loads (self.db [self.build_key (table_name, key)])
         except Exception :
             return None
     ## read next table indexed row, or first row if key is not provided
@@ -74,7 +93,7 @@ class SimpleDB :
         rows = []
         for row in self.db.values (self.build_key (table_name, start_key) ,
                                       self.build_key (table_name, end_key)) :
-            rows.append (json.loads (row.decode()))   # table key value
+            rows.append (loads (row))   # table key value
             if len (rows) >= limit :
                 break
         return rows
@@ -88,7 +107,14 @@ class SimpleDB :
 # end SimpleDB  #
 
 if __name__ == "__main__" :
-    my_db = SimpleDB  ("test.db")
+    import os
+    db_file_name = "test.db"
+    try :
+        os.remove (db_file_name)
+        print ("Removed:", db_file_name)
+    except :
+        pass
+    my_db = SimpleDB  (db_file_name)
     if not simpledb_available :
         import sys
         print ("db failed to initialize")
