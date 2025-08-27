@@ -6,6 +6,7 @@ import os, sys
 from time import sleep_ms
 
 from modules.sdcard import SDCard
+from modules.simple_db import SimpleDB, simpledb_available
 from modules.sys_font import SysFont
 
 # Save this file as ili9341.py https://github.com/rdagger/micropython-ili9341/blob/master/ili9341.py
@@ -275,7 +276,9 @@ def touchscreen_tests() :
                 break
             sleep_ms (500)
         sleep_ms (10)
-        #if touch is None :
+    display.fill_rectangle (5, 50, 310, 20, WHITE)
+    sys_font.text_sysfont (5, 210, "  Goodby  ", scale=3, text_color=BLACK)
+    sleep_ms (1000)
 
 def sdcard_tests() :
     write_log ("sdcard_tests")
@@ -283,6 +286,70 @@ def sdcard_tests() :
     if sd_mount is None :
         print ("sdcard_tests: SD card not mounted")
         return
+
+DB_ROWS = {
+    "customers" : {
+        "000500" : {"name":"Moe" ,
+            "dob":19200101 ,
+            "occupation":"Three stooges"} ,
+        "010000" : {"name":"Larry" ,
+            "dob":19210202 ,
+            "occupation":"Three stooges"} ,
+        "001000" : {"name":"Curly" ,
+            "dob":19250303 ,
+            "occupation":"Three stooges"} ,
+        } ,
+    "vendors" : {
+        "100200" : {
+            "name" : "IBM" ,
+            "balance" : "001500.00"
+            } ,
+        "101200" : {
+            "name" : "Nvidia" ,
+            "balance" : "010000.00"
+            }
+        } ,
+    "developers" : {
+        "200100" : {"name" : "Curt" ,
+                    "dob" : 19560606 ,
+                    "status":"retired"}
+        }
+    }
+
+def sdcard_db_tests () :
+    global sd_mount
+    global SIMPLEDB_PATH
+    if not simpledb_available :
+        print ("SimpleDB module is not available")
+        return
+    if sd_mount is None :
+        print ("sdcard_db_tests: SD card not mounted")
+        return
+    SIMPLEDB_PATH = sd_mount + "/test.db"
+    try :
+        os.remove (SIMPLEDB_PATH)
+    except Exception :
+        pass
+    # build sample database
+    db = SimpleDB (SIMPLEDB_PATH)
+    for _, (table_name, table_entries) in enumerate (DB_ROWS.items ()) :
+        #print (table_name, entries)
+        for _, (acct_number, acct_data) in enumerate (table_entries.items()) :
+            db.write_row (table_name, acct_number, acct_data)
+    display_table_rows (db, "vendors")
+    display_table_rows (db, "customers")
+    display_table_rows (db, "developers")
+    db.close ()
+
+# end sdcard_db_tests #
+
+def display_table_rows (db, table_name) :
+    row = db.next_row (table_name)
+    print (f"## {table_name}")
+    while row is not None :
+        for _, (col_name, col_data) in enumerate (row.items()) :
+            print (f"  {col_name}: {col_data}")
+        row = db.next_row (table_name, row["key"])
 
 ################################################################################
 
@@ -292,9 +359,10 @@ print ("SD card mount:", sd_mount)
 display = initialize_display ()
 touchscreen = initialize_touchscreen ()
 
-display_tests ()
-touchscreen_tests ()
-sdcard_tests ()
+#display_tests ()
+#touchscreen_tests ()
+#sdcard_tests ()
+sdcard_db_tests ()
 
 if log_file_id is not None :
     log_file_id.close ()
@@ -307,4 +375,4 @@ if log_file_id is not None :
 
 if sd_mount is not None :
     print ("Unmounting:", sd_mount)
-    os.umount (sd_mount)
+    #os.umount (sd_mount)
