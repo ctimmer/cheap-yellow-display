@@ -276,7 +276,7 @@ def touchscreen_tests() :
                 break
             sleep_ms (500)
         sleep_ms (10)
-    display.fill_rectangle (5, 50, 310, 20, WHITE)
+    display.fill_rectangle (5, 210, 310, 20, WHITE)
     sys_font.text_sysfont (5, 210, "  Goodby  ", scale=3, text_color=BLACK)
     sleep_ms (1000)
 
@@ -347,8 +347,10 @@ def display_table_rows (db, table_name) :
     row = db.next_row (table_name)
     print (f"## {table_name}")
     while row is not None :
+        indent = " #"
         for _, (col_name, col_data) in enumerate (row.items()) :
-            print (f"  {col_name}: {col_data}")
+            print (f"{indent}{col_name:15}: {col_data}")
+            indent = "  "
         row = db.next_row (table_name, row["key"])
 
 ################################################################################
@@ -359,9 +361,9 @@ print ("SD card mount:", sd_mount)
 display = initialize_display ()
 touchscreen = initialize_touchscreen ()
 
-#display_tests ()
-#touchscreen_tests ()
-#sdcard_tests ()
+display_tests ()
+touchscreen_tests ()
+sdcard_tests ()
 sdcard_db_tests ()
 
 if log_file_id is not None :
@@ -375,4 +377,4 @@ if log_file_id is not None :
 
 if sd_mount is not None :
     print ("Unmounting:", sd_mount)
-    #os.umount (sd_mount)
+    os.umount (sd_mount)
