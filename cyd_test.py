@@ -2,7 +2,7 @@
 # Complete project details at https://RandomNerdTutorials.com/micropython-cheap-yellow-display-board-cyd-esp32-2432s028r/
  
 from machine import Pin, SPI, SoftSPI, ADC, idle
-import os, sys
+import os, sys, gc
 from time import sleep_ms
 
 from modules.sdcard import SDCard
@@ -12,10 +12,9 @@ from modules.sys_font import SysFont
 # Save this file as ili9341.py https://github.com/rdagger/micropython-ili9341/blob/master/ili9341.py
 from modules.ili9341 import Display, color565
 # Save this file as xglcd_font.py https://github.com/rdagger/micropython-ili9341/blob/master/xglcd_font.py
-from modules.my_xglcd_font import XglcdFont
+from modules.xglcd_font import XglcdFont
 # Touch screen interface
 from modules.xpt2046 import Touch
-
 
 ## Display
 SPI_ID = 1
@@ -288,32 +287,47 @@ def sdcard_tests() :
         return
 
 DB_ROWS = {
-    "customers" : {
-        "000500" : {"name":"Moe" ,
+    "customers" : [
+        {"key" : "000500" ,
+            "name":"Moe" ,
             "dob":19200101 ,
             "occupation":"Three stooges"} ,
-        "010000" : {"name":"Larry" ,
+        {"key" : "010000" ,
+            "name":"Larry" ,
             "dob":19210202 ,
             "occupation":"Three stooges"} ,
-        "001000" : {"name":"Curly" ,
+        {"key" : "001000" ,
+            "name":"Curly" ,
             "dob":19250303 ,
-            "occupation":"Three stooges"} ,
-        } ,
-    "vendors" : {
-        "100200" : {
+            "occupation":"Three stooges"}
+        ] ,
+    "invoices" : [
+        {"key" : "10000001" ,
+            "customer" : "010000"}
+        ] ,
+    "invoice_lines" : [
+        {"key" : ["10000001", "0001"] ,
+            "sku" : "12345678" ,
+            "quantity" : 12} ,
+        {"key" : ["10000001", "0002"] ,
+            "sku" : "11223344" ,
+            "quantity" : 144 ,
+            "price" : "000100.00"}
+        ] ,
+    "vendors" : [
+        {"key" : "100200" ,
             "name" : "IBM" ,
-            "balance" : "001500.00"
-            } ,
-        "101200" : {
+            "balance" : "001500.00"} ,
+        {"key" : "101200" ,
             "name" : "Nvidia" ,
-            "balance" : "010000.00"
-            }
-        } ,
-    "developers" : {
-        "200100" : {"name" : "Curt" ,
-                    "dob" : 19560606 ,
-                    "status":"retired"}
-        }
+            "balance" : "010000.00"}
+        ] ,
+    "developers" : [
+        {"key" : "200100" ,
+            "name" : "Curt" ,
+            "dob" : 19560606 ,
+            "status":"retired"}
+        ]
     }
 
 def sdcard_db_tests () :
@@ -328,16 +342,19 @@ def sdcard_db_tests () :
     SIMPLEDB_PATH = sd_mount + "/test.db"
     try :
         os.remove (SIMPLEDB_PATH)
+        print ("db_tests: Removed:", SIMPLEDB_PATH)
     except Exception :
         pass
     # build sample database
     db = SimpleDB (SIMPLEDB_PATH)
     for _, (table_name, table_entries) in enumerate (DB_ROWS.items ()) :
         #print (table_name, entries)
-        for _, (acct_number, acct_data) in enumerate (table_entries.items()) :
-            db.write_row (table_name, acct_number, acct_data)
+        for _, row in enumerate (table_entries) :
+            db.write_row (table_name, row["key"], row)
     display_table_rows (db, "vendors")
     display_table_rows (db, "customers")
+    display_table_rows (db, "invoices")
+    display_table_rows (db, "invoice_lines")
     display_table_rows (db, "developers")
     db.close ()
 
@@ -347,11 +364,14 @@ def display_table_rows (db, table_name) :
     row = db.next_row (table_name)
     print (f"## {table_name}")
     while row is not None :
+        #if row["key"] !=
         indent = " #"
         for _, (col_name, col_data) in enumerate (row.items()) :
             print (f"{indent}{col_name:15}: {col_data}")
             indent = "  "
         row = db.next_row (table_name, row["key"])
+        #print ("next:",row)
+        #sleep_ms (2000)
 
 ################################################################################
 
