@@ -306,10 +306,12 @@ DB_ROWS = {
             "customer" : "010000"}
         ] ,
     "invoice_lines" : [
-        {"key" : ["10000001", "0001"] ,
+        {"key" : "10000001" ,
+            "key2" : "0001" ,
             "sku" : "12345678" ,
             "quantity" : 12} ,
-        {"key" : ["10000001", "0002"] ,
+        {"key" : "10000001" ,
+            "key2" : "0002" ,
             "sku" : "11223344" ,
             "quantity" : 144 ,
             "price" : "000100.00"}
@@ -327,6 +329,10 @@ DB_ROWS = {
             "name" : "Curt" ,
             "dob" : 19560606 ,
             "status":"retired"}
+        ] ,
+    "log" : [
+        ["20250903122010","Error","Log error"] ,
+        ["20250904141020","Warning", "Log warning"]
         ]
     }
 
@@ -346,16 +352,29 @@ def sdcard_db_tests () :
     except Exception :
         pass
     # build sample database
-    db = SimpleDB (SIMPLEDB_PATH)
+    db = SimpleDB (SIMPLEDB_PATH, auto_commit = False)
     for _, (table_name, table_entries) in enumerate (DB_ROWS.items ()) :
-        #print (table_name, entries)
+        #print (table_name, table_entries)
+        keys = None
+        if isinstance (table_entries[0], list) :
+            keys = [0]    # only 1 allowed for test
+        else :
+            keys = ["key"]
+            for key in ["key2", "key3", "keyy4"] :
+                if key not in table_entries[0] :
+                    break
+                keys.append (key)
         for _, row in enumerate (table_entries) :
-            db.write_row (table_name, row["key"], row)
+            db.write_row (table_name, keys, row)
+    #
     display_table_rows (db, "vendors")
     display_table_rows (db, "customers")
     display_table_rows (db, "invoices")
     display_table_rows (db, "invoice_lines")
     display_table_rows (db, "developers")
+    display_table_rows (db, "log")
+    #
+    db.dump_all ("testdb.txt")
     db.close ()
 
 # end sdcard_db_tests #
@@ -366,10 +385,23 @@ def display_table_rows (db, table_name) :
     while row is not None :
         #if row["key"] !=
         indent = " #"
-        for _, (col_name, col_data) in enumerate (row.items()) :
-            print (f"{indent}{col_name:15}: {col_data}")
-            indent = "  "
-        row = db.next_row (table_name, row["key"])
+        if isinstance (row, list) :
+            for col_idx, col_data in enumerate (row) :
+                print (f"{indent}{col_idx:4}: {col_data}")
+                indent = "  "
+            keys = [row[0]]
+        else :
+            for _, (col_name, col_data) in enumerate (row.items()) :
+                print (f"{indent}{col_name:15}: {col_data}")
+                indent = "  "
+            keys = [row["key"]]
+            for key in ["key2", "key3", "key4"] :
+                #print (row)
+                if key not in row :
+                    break
+                keys.append (row[key])
+                #print ("d_t:",keys)
+        row = db.next_row (table_name, keys)
         #print ("next:",row)
         #sleep_ms (2000)
 
@@ -381,8 +413,8 @@ print ("SD card mount:", sd_mount)
 display = initialize_display ()
 touchscreen = initialize_touchscreen ()
 
-display_tests ()
-touchscreen_tests ()
+#display_tests ()
+#touchscreen_tests ()
 sdcard_tests ()
 sdcard_db_tests ()
 

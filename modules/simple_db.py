@@ -1,5 +1,38 @@
 #
+################################################################################
+# The MIT License (MIT)
+#
+# Copyright (c) 2025 Curt Timmerman
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+################################################################################
+#
+## SimpleDB - Very simple relational database
+#
+# Notes:
+#   o Uses btree module for DB engine.
+#   o JSON is the default row storage format
+#   o USE_JSON = False for umsgpack row storage format (more compact)
+#
+################################################################################
 
+## Required for load/dump
 import json
 
 USE_JSON = True
@@ -13,7 +46,7 @@ if USE_JSON :
     print ("Using json module")
     try :
         import btree
-        dumps = lambda row_dict : bytes (json.dumps (row_dict).encode())
+        dumps = lambda row_data : bytes (json.dumps (row_data).encode())
         loads = lambda row : json.loads (row.decode())
     except Exception as e :
         print (e)
@@ -23,7 +56,7 @@ else :
     try :
         import umsgpack
         import btree
-        dumps = lambda row_dict : umsgpack.dumps(row_dict)
+        dumps = lambda row_data : umsgpack.dumps(row_data)
         loads = lambda row : umsgpack.loads(row)
     except Exception as e :
         print (e)
@@ -37,12 +70,15 @@ class SimpleDB :
             #raise ???
             return
         self.db_file = None
+        print (db_file_path)
         try:
             self.db_file = open(db_file_path, "r+b")
         except OSError:
             self.db_file = open(db_file_path, "w+b")
         self.db = btree.open (self.db_file)
         self.key_separator = key_separator
+        self.key_low = ""
+        self.key_high = "~~~~~"
         self.dump_separator = dump_separator
         self.auto_commit = auto_commit
 
@@ -52,18 +88,21 @@ class SimpleDB :
         if isinstance (key, list) :
             pk.extend (key)
         else :
-            if len (key) > 0 :
-                pk.append (key)
-        #print ("build_key:", (self.key_separator.join (pk).encode ()))
-        return bytes (self.key_separator.join (pk).encode ())
-    ## writes/rewrites table row from row_dict
-    def write_row (self,table_name,key,row_dict) :
-        if isinstance (row_dict, dict) :
-            row_dict ["key"] = key    # include key in row
+            pk.append (key)
+        return bytes ((self.key_separator.join (pk)).encode ())
+    ## writes/rewrites table row from row_data
+    def write_row (self,table_name,pk,row_data) :
+        #print ("w_r:", table_name,pk)
+        key = None
+        if not isinstance (pk, list) :
+            key = row_data [pk]
+        else :
+            key = []
+            for _, key_id in enumerate (pk) :
+                key.append (row_data [key_id])
         db_key = self.build_key(table_name, key)
-        db_row = dumps(row_dict)
-        #print ("w_r:", db_key, db_row)
-        self.db [self.build_key(table_name, key)]=dumps(row_dict)
+        db_row = dumps(row_data)
+        self.db [db_key] = db_row
         if self.auto_commit :
             self.commit ()
     ## read row from table/key, returns None if not found
@@ -77,12 +116,22 @@ class SimpleDB :
     ## read next table indexed row, or first row if key is not provided
     def next_row (self,table_name,key = "") :
         row_ret = None             # Not found
-        rows = self.get_table_rows (table_name, key, limit = 2)
-        #print ("next_row", rows)
+        start_key = self.build_key (table_name, key)
+        for db_key in self.db.keys (start_key, # None) :
+                                    self.build_key (table_name, self.key_high)) :
+            if db_key != start_key :
+                return loads (self.db [db_key])
+            
+        '''
         for row in rows :
-            if row["key"] != key :
+            if isinstance (row, list) :
+                row_key = row[0]
+            else :
+                row_key = row["key"]
+            if row_key != key :
                 row_ret = row      # This is the next row
                 break
+        '''
         return row_ret
     ## Return True if this key is in table_name
     def row_exists (self,table_name,key) :
@@ -94,10 +143,18 @@ class SimpleDB :
             if self.auto_commit :
                 self.commit ()
     ## Returns list of keys in table
-    def get_table_keys (self,table_name,start_key="",end_key="~~~~",limit=999999) :
+    def get_table_keys (self,table_name,start_key=None,end_key=None,limit=999999) :
         key_list = []
-        for key in self.db.keys (self.build_key (table_name, start_key) ,
-                                      self.build_key (table_name, end_key)) :
+        key_low = start_key
+        key_high = end_key
+        if key_low is None :
+            key_low = self.key_low
+        if key_high is None :
+            key_high = self.key_high
+        #
+        for key in self.db.keys (self.build_key (table_name, key_low) ,
+                                      self.build_key (table_name, key_high)) :
+            key = str (key.decode())
             #print ("gtk key:", key)
             key_elements = str (key).split (self.key_separator)
             key_list.append (key_elements [1])   # table key only
@@ -105,17 +162,38 @@ class SimpleDB :
                 break
         return key_list
     ## Returns list of rows in a table
-    def get_table_rows (self,table_name,start_key="",end_key="~~~~",limit=999999) :
+    def get_table_rows (self,table_name,start_key=None,end_key=None,limit=999999) :
         rows = []
-        for row in self.db.values (self.build_key (table_name, start_key) , # None) :
-                                      self.build_key (table_name, end_key)) :
-            #print ("gtr:", row)
-            rows.append (loads (row))   # table key value
+        key_low = start_key
+        key_high = end_key
+        if key_low is None :
+            key_low = self.key_low
+        if key_high is None :
+            key_high = self.key_high
+        #
+        for row in self.db.values (self.build_key (table_name, key_low) , # None) :
+                                      self.build_key (table_name, key_high)) :
+            rows.append (loads (row))   # table row
             if len (rows) >= limit :
                 break
-        
-        #print ("gtr: rows", rows)
         return rows
+    ## Returns list of rows in a table
+    def get_table_items (self,table_name,start_key=None,end_key=None,limit=999999) :
+        items = []
+        key_low = start_key
+        key_high = end_key
+        if key_low is None :
+            key_low = self.key_low
+        if key_high is None :
+            key_high = self.key_high
+        #
+        for item in self.db.items (self.build_key (table_name, key_low) , # None) :
+                                      self.build_key (table_name, key_high)) :
+            items.append ([str (item[0].decode()), loads (item[1])])   # table row
+            if len (items) >= limit :
+                break
+        print ("items:", items)
+        return items
 
     ## dump_all
     def dump_all (self, file_path = "db_dump.txt") :
@@ -129,7 +207,8 @@ class SimpleDB :
                     row = umsgpack.loads(row)
                     row = json.dumps (row)
                 #print (f"dump: {key}{self.dump_separator}{row}")
-                print (f"{key}{self.dump_separator}{row}", file=dump_file)
+                #print (f"{key}{self.dump_separator}{row}", file=dump_file)
+                dump_file.write (key + self.dump_separator + row + "\n")
     ## load
     def load (self, file_path = "db_dump.txt") :
         print ("Loading:", file_path)
@@ -138,12 +217,16 @@ class SimpleDB :
                 key_row = (line.strip()).split (self.dump_separator)
                 #print ("key_row:",key_row)
                 key = bytes (key_row[0].encode ())
-                row = bytes (key_row[1].encode ())
+                if USE_JSON :
+                    row = bytes (key_row[1].encode ())
+                else :
+                    row = json.loads (key_row[1])
+                    row = dumps (row)
                 print (f"load: key={key} row={row}")
                 self.db [key] = row
                 self.commit ()
 
-    ## commit change (if autocommit is not set)
+    ## commit updates(s), if autocommit is not set
     def commit (self) :
         self.db.flush ()
     def close (self) :
@@ -153,7 +236,8 @@ class SimpleDB :
 
 # end SimpleDB  #
 
-if __name__ == "__main__" :
+
+def main () :
     import os
     print (os.uname())
     db_file_name = "test.db"
@@ -170,33 +254,70 @@ if __name__ == "__main__" :
 
     #my_db.load ()
     #
-    my_db.write_row ("customer", "000100", {"name":"Curt" ,
-                                            "dob":19560606 ,
-                                            "occupation":"retired"})
-    my_db.write_row ("customer", "000500", {"name":"Moe" ,
+    my_db.write_row ("customer", "customer_number" ,  {"customer_number" : "000100" ,
+                                                        "name":"Curt" ,
+                                                        "dob":19560606 ,
+                                                        "occupation":"retired"})
+    my_db.write_row ("customer", "customer_number", {"customer_number" : "000500" ,
+                                            "name":"Moe" ,
                                             "dob":19200101 ,
                                             "occupation":"Three stooges"})
-    my_db.write_row ("customer", "010000", {"name":"Larry" ,
+    my_db.write_row ("customer", "customer_number", {"customer_number" : "010000" ,
+                                            "name":"Larry" ,
                                             "dob":19210202 ,
                                             "occupation":"Three stooges"})
-    my_db.write_row ("customer", "001000", {"name":"Curly" ,
+    my_db.write_row ("customer", "customer_number", {"customer_number" : "001000" ,
+                                            "name":"Curly" ,
                                             "dob":19250303 ,
                                             "occupation":"Three stooges"})
+    my_db.write_row ("invoice",
+                    "invoice_number" ,
+                    {"invoice_number" : "090001" ,
+                    "customer_number" : "001000"})
+    my_db.write_row ("invoice_line",
+                    ["invoice_number", "line_number"] ,
+                    {"invoice_number" : "090001" ,
+                    "line_number" : "0001" ,
+                    "sku" : "Snake Oil" ,
+                    "price" : "100.00"})
+    my_db.write_row ("invoice_line",
+                    ["invoice_number", "line_number"] ,
+                    {"invoice_number" : "090001" ,
+                    "line_number" : "0002" ,
+                    "sku" : "Aspirin" ,
+                    "price" : "12.00"})
+    my_db.write_row ("log",
+                    0 ,
+                    ["20250903122010","Error","Log error"])
+    my_db.write_row ("log",
+                    0 ,
+                    ["20250904141020","Warning", "Log warning"])
     #
-    #print ("good read:", my_db.read_row ("customer", "000100")) # Good key
-    #print ("bad read:", my_db.read_row ("customer", "000199")) # bad key
-    #print ("all keys:", my_db.get_table_keys ("customer"))
-    #print ("rows:", my_db.get_table_rows ("customer", "000500", "990000"))
-    row = my_db.next_row ("customer")
-    #row = my_db.next_row ("customer", "000100")
-    #print (row)
-    while row is not None :
-        #print ("next_row:", row)
-        row = my_db.next_row ("customer", row["key"])
+    print ("good read:", my_db.read_row ("customer", "000100")) # Good key
+    print ("bad read:", my_db.read_row ("customer", "000199")) # bad key
+    print ("all keys:", my_db.get_table_keys ("customer"))
+    print ("rows:", my_db.get_table_rows ("customer", "000500", "990000"))
     #
+    my_db.get_table_items ("customer")
 
-    my_db.commit ()
+    row = my_db.next_row ("customer")
+    while row is not None :
+        print ("row:", row)
+        row = my_db.next_row ("customer", row["customer_number"])
+    #
+    row = my_db.next_row ("log")
+    while row is not None :
+        print ("row:", row)
+        row = my_db.next_row ("log", row[0])
+    #
+    row = my_db.next_row ("error_table")
+    while row is not None :
+        print ("row:", row)
+        row = my_db.next_row ("log", row[0])
+    #
     my_db.dump_all ()
-    #my_db.load ()
     my_db.close ()
 
+#----------------------------------------------------
+if __name__ == "__main__" :
+    main ()
