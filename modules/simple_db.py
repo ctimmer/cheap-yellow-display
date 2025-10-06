@@ -32,11 +32,18 @@
 #
 ################################################################################
 
+import time
+
 ## Required for load/dump
 import json
 
-USE_JSON = True
+## Default valules
+KEY_SEPARATOR = "."
+DUMP_SEPARATOR = "~"
+DATE_FORMAT = "{:04d}-{:02d}-{:02d}"
+TIME_FORMAT = "{:02d}:{:02d}:{:02d}"
 
+USE_JSON = True
 btree = None
 dumps = None
 loads = None
@@ -63,48 +70,85 @@ else :
 
 simpledb_available = btree is not None
 
+##
 class SimpleDB :
-    def __init__ (self,db_file_path,key_separator = ".",dump_separator="~",auto_commit=True) :
+    def __init__ (self,db_file_path,key_separator=KEY_SEPARATOR,dump_separator=DUMP_SEPARATOR,auto_commit=True) :
+        self.key_separator = key_separator
+        self.key_low = ""
+        self.key_high = "~~~~~"
+        self.dump_separator = dump_separator
+        self.auto_commit = auto_commit
         if btree is None :
             print ("support module(s) missing")
             #raise ???
             return
-        self.db_file = None
+        ## OK, open file, btree DB
+        self.db_file_path = db_file_path
         print (db_file_path)
         try:
             self.db_file = open(db_file_path, "r+b")
         except OSError:
             self.db_file = open(db_file_path, "w+b")
         self.db = btree.open (self.db_file)
-        self.key_separator = key_separator
-        self.key_low = ""
-        self.key_high = "~~~~~"
-        self.dump_separator = dump_separator
-        self.auto_commit = auto_commit
+
+    ## Return configuration
+    def get_configuration (self) :
+        return {
+            "key_separator" : self.key_separator ,
+            "dump_separator" : self.dump_separator ,
+            "simpledb_available" : simpledb_available
+            }
 
     ## builds btree key from table_name and key
     def build_key (self,table_name,key="") -> bytes :
         pk = [table_name]
-        if isinstance (key, list) :
-            pk.extend (key)
+        if key is None :
+            pass
+        elif isinstance (key, list) :
+            for _, key_value in enumerate (key) :
+                pk.append (str (key_value))
         else :
-            pk.append (key)
+            pk.append (str (key))
         return bytes ((self.key_separator.join (pk)).encode ())
-    ## writes/rewrites table row from row_data
-    def write_row (self,table_name,pk,row_data) :
-        #print ("w_r:", table_name,pk)
+    def build_key_from_ids (self,table_name,pk_id=None,row_data=None) :
         key = None
-        if not isinstance (pk, list) :
-            key = row_data [pk]
+        if pk_id is None :
+            pass
+        elif not isinstance (pk_id, list) :
+            key = row_data [pk_id]
         else :
             key = []
-            for _, key_id in enumerate (pk) :
+            for _, key_id in enumerate (pk_id) :
                 key.append (row_data [key_id])
-        db_key = self.build_key(table_name, key)
+        return self.build_key (table_name,key)
+
+    ## rewrites table row from row_data
+    def write_row (self,table_name,pk_id,row_data) :
+        #print ("w_r:", table_name,pk)
+        db_key = self.build_key_from_ids (table_name,pk_id,row_data)
         db_row = dumps(row_data)
         self.db [db_key] = db_row
         if self.auto_commit :
             self.commit ()
+    ## rewrites updated table row from update_data
+    def rewrite_row (self,table_name,key,update_data) :
+        #print ("w_r:", table_name,pk)
+        reply = None
+        db_key = self.build_key (table_name, key)
+        try :
+            db_row = self.db [db_key]    # retrive current row
+            db_row = loads (db_row)      # row to dict
+            db_row.update (update_data)  # update row fields
+            reply = json.dumps (db_row)  # save reply
+            db_row = dumps (db_row)      # dict to internal format
+            self.db [db_key] = db_row    # update DB row
+        except Exception as e:
+            print  (e)
+            return None
+        if self.auto_commit :
+            self.commit ()
+        return reply          # return updated row
+
     ## read row from table/key, returns None if not found
     def read_row (self,table_name,key) :
         #print ("read_row:", self.build_key (table_name, key))
@@ -113,6 +157,36 @@ class SimpleDB :
             return loads (self.db [self.build_key (table_name, key)])
         except Exception :
             return None
+    ## read row columns from table/key, returns None if not found
+    def read_columns (self,table_name,key,column_list) :
+        #print ("read_columns:", self.build_key (table_name, key), column_list)
+        try :
+            row = loads (self.db [self.build_key (table_name, key)])
+            columns = {}
+            # set valid valid column id test
+            id_exists = None
+            if isinstance (row, list) :
+                id_exists = lambda col_id : col_id >= 0 and col_id < len (row)
+            else :
+                id_exists = lambda col_id : col_id in row
+            for _, col_id in enumerate (column_list) :
+                if id_exists (col_id) :
+                    columns [col_id] = row [col_id]   # Valid column id
+                else :
+                    columns [col_id] = None           # Bad column id
+            return columns
+        except Exception as e :
+            print (e)
+            return None
+
+    ## read first table indexed row, or first row if key is not provided
+    def first_row (self,table_name,key = "") :
+        row_ret = None             # Not found
+        start_key = self.build_key (table_name, key)
+        for db_key in self.db.keys (start_key, # None) :
+                                    self.build_key (table_name, self.key_high)) :
+            return loads (self.db [db_key])    # returns first key row
+        return row_ret
     ## read next table indexed row, or first row if key is not provided
     def next_row (self,table_name,key = "") :
         row_ret = None             # Not found
@@ -121,27 +195,24 @@ class SimpleDB :
                                     self.build_key (table_name, self.key_high)) :
             if db_key != start_key :
                 return loads (self.db [db_key])
-            
-        '''
-        for row in rows :
-            if isinstance (row, list) :
-                row_key = row[0]
-            else :
-                row_key = row["key"]
-            if row_key != key :
-                row_ret = row      # This is the next row
-                break
-        '''
         return row_ret
     ## Return True if this key is in table_name
     def row_exists (self,table_name,key) :
         return self.build_key (table_name, key) in self.db
     ## Delete row from table
     def delete_row (self,table_name,key) :
-        if self.row_exists (table_name, key) :
-            del (self.db [self.build_key (table_name, key)])
+        row_data = None
+        delete_key = self.build_key (table_name, key)
+        try :
+            #print (loads (self.db [self.build_key (table_name, key)]))
+            row_data = loads (self.db [delete_key])
+            del (self.db [delete_key])
             if self.auto_commit :
                 self.commit ()
+        except Exception :
+            pass
+        return row_data
+
     ## Returns list of keys in table
     def get_table_keys (self,table_name,start_key=None,end_key=None,limit=999999) :
         key_list = []
@@ -192,15 +263,19 @@ class SimpleDB :
             items.append ([str (item[0].decode()), loads (item[1])])   # table row
             if len (items) >= limit :
                 break
-        print ("items:", items)
+        #print ("items:", items)
         return items
 
     ## dump_all
-    def dump_all (self, file_path = "db_dump.txt") :
-        with open (file_path, "w") as dump_file :
+    def dump_all (self, file_path = None) :
+        file_name = file_path
+        if file_name is None :
+            file_name = self.db_file_path + ".dump.txt"
+        with open (file_name, "w") as dump_file :
             for key in self.db :
                 row = self.db[key]
                 key = str (key.decode ())
+                ## Always dump row in json text format
                 if USE_JSON :
                     row = str (row.decode())
                 else :
@@ -209,10 +284,18 @@ class SimpleDB :
                 #print (f"dump: {key}{self.dump_separator}{row}")
                 #print (f"{key}{self.dump_separator}{row}", file=dump_file)
                 dump_file.write (key + self.dump_separator + row + "\n")
-    ## load
-    def load (self, file_path = "db_dump.txt") :
-        print ("Loading:", file_path)
-        with open (file_path, "r") as load_file :
+    ## Build dump_all extract line (no database access)
+    def dump_build_line (self,table_name,pk_id,row_data) :
+        key = self.build_key_from_ids (table_name, pk_id, row_data).decode ()
+        return key + self.dump_separator + json.dumps (row_data) + "\n"
+
+    ## load - Load DB from dump_all file format
+    def load (self, file_path = None) :
+        file_name = file_path
+        if file_name is None :
+            file_name = self.db_file_path + ".dump.txt"
+        print ("Loading:", file_name)
+        with open (file_name, "r") as load_file :
             for line in load_file:
                 key_row = (line.strip()).split (self.dump_separator)
                 #print ("key_row:",key_row)
@@ -233,31 +316,63 @@ class SimpleDB :
         self.commit ()
         self.db.close ()
         self.db_file.close ()
+        
+    ## Utilities
+    def get_date_time (self, epoch_seconds = None) :
+        seconds = epoch_seconds
+        if seconds is None :
+            seconds = time.time ()
+        local_time = time.localtime (seconds)
+        return self.get_date (seconds) + " " + self.get_time (seconds)
+    def get_date (self, epoch_seconds = None) :
+        seconds = epoch_seconds
+        if seconds is None :
+            seconds = time.time ()
+        local_time = time.localtime (seconds)
+        return DATE_FORMAT.format (local_time[0],local_time[1],local_time[2])
+    def get_time (self, epoch_seconds = None) :
+        seconds = epoch_seconds
+        if seconds is None :
+            seconds = time.time ()
+        local_time = time.localtime (seconds)
+        return TIME_FORMAT.format (local_time[3],local_time[4],local_time[5])
 
 # end SimpleDB  #
 
-
 def main () :
     import os
-    print (os.uname())
-    db_file_name = "test.db"
+    #print (os.uname())
+    db_file_name = "btree_test.db"
     try :
         os.remove (db_file_name)
         print ("Removed:", db_file_name)
     except :
         pass
-    my_db = SimpleDB  (db_file_name)
+    my_db = SimpleDB (db_file_name)
+    print ("build_row:",my_db.dump_build_line ("customer",
+                                                "customer_number" ,
+                                                {"customer_number" : "000100" ,
+                                                    "name":"Curt" ,
+                                                    "dob":19560606 ,
+                                                    "occupation":"retired"}))
     if not simpledb_available :
         import sys
         print ("db failed to initialize")
         sys.exit ()
 
+    print (my_db.get_date_time ())
+    print (my_db.get_date ())
+    print (my_db.get_time ())
     #my_db.load ()
     #
     my_db.write_row ("customer", "customer_number" ,  {"customer_number" : "000100" ,
                                                         "name":"Curt" ,
                                                         "dob":19560606 ,
                                                         "occupation":"retired"})
+    print ("rewrite_row:" ,
+        my_db.rewrite_row ("customer", "000100" , {"location" : "Alaska"}))
+    print ("read_columns:" ,
+        my_db.read_columns ("customer", "000100" , ["name","location","bad_id"]))
     my_db.write_row ("customer", "customer_number", {"customer_number" : "000500" ,
                                             "name":"Moe" ,
                                             "dob":19200101 ,
@@ -270,6 +385,10 @@ def main () :
                                             "name":"Curly" ,
                                             "dob":19250303 ,
                                             "occupation":"Three stooges"})
+    my_db.write_row ("customer", "customer_number", {"customer_number" : "999999" ,
+                                            "name":"Delete test" ,
+                                            "dob":20000101 ,
+                                            "occupation":"doesnt matter"})
     my_db.write_row ("invoice",
                     "invoice_number" ,
                     {"invoice_number" : "090001" ,
@@ -292,25 +411,36 @@ def main () :
     my_db.write_row ("log",
                     0 ,
                     ["20250904141020","Warning", "Log warning"])
+
+    print ("read_columns:" ,
+        my_db.read_columns ("log", "20250904141020" , [0,3]))
     #
     print ("good read:", my_db.read_row ("customer", "000100")) # Good key
     print ("bad read:", my_db.read_row ("customer", "000199")) # bad key
     print ("all keys:", my_db.get_table_keys ("customer"))
     print ("rows:", my_db.get_table_rows ("customer", "000500", "990000"))
+    if my_db.row_exists ("customer", "999999") :
+        print ("Delete row:", my_db.delete_row ("customer", "999999"))
+        if my_db.row_exists ("customer", "999999") :
+            print ("customer 999999 was not delete")
+        else :
+            print ("customer 999999 delete success")
+    else :
+        print ("Customer: 999999 missing")
     #
-    my_db.get_table_items ("customer")
+    #print (my_db.get_table_items ("customer"))
 
-    row = my_db.next_row ("customer")
+    row = my_db.first_row ("customer")
     while row is not None :
         print ("row:", row)
         row = my_db.next_row ("customer", row["customer_number"])
     #
-    row = my_db.next_row ("log")
+    row = my_db.first_row ("log")
     while row is not None :
         print ("row:", row)
         row = my_db.next_row ("log", row[0])
     #
-    row = my_db.next_row ("error_table")
+    row = my_db.first_row ("error_table")
     while row is not None :
         print ("row:", row)
         row = my_db.next_row ("log", row[0])
